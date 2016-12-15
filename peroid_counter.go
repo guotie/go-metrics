@@ -45,7 +45,9 @@ type PeriodCounter interface {
 	LatestPeriodCountRate(string) (int64, float64)
 
 	Periods() []string
-	SetProids(string, time.Duration)
+	SetPeriod(string, time.Duration)
+	SetPeriods(map[string]time.Duration)
+	Snapshot() PeriodCounter
 }
 
 // GetOrRegisterPeriodCounter returns an existing Counter or constructs and registers
@@ -79,6 +81,54 @@ func NewRegisteredPeriodCounter(name string, r Registry) PeriodCounter {
 	return c
 }
 
+// countRate count and rate
+type countRate struct {
+	count int64
+	rate  float64
+}
+
+// PeriodCounterSnapshot is a read-only copy of another PeriodCounter.
+type PeriodCounterSnapshot struct {
+	count        int64
+	periodCounts map[string]countRate
+}
+
+// Clear panics.
+func (*PeriodCounterSnapshot) Clear() { panic("Clear called on a PeriodCounterSnapshot") }
+
+// Inc panics.
+func (*PeriodCounterSnapshot) Inc(int64) { panic("Inc called on a PeriodCounterSnapshot") }
+
+// SetPeriod panics.
+func (*PeriodCounterSnapshot) SetPeriod(string, time.Duration) {
+	panic("SetPeriod called on a PeriodCounterSnapshot")
+}
+
+// SetPeriods panics.
+func (*PeriodCounterSnapshot) SetPeriods(map[string]time.Duration) {
+	panic("SetPeriods called on a PeriodCounterSnapshot")
+}
+
+// Count return count
+func (pcs *PeriodCounterSnapshot) Count() int64 { return pcs.count }
+
+// LatestPeriodCountRate return period count and rate of the period
+func (pcs *PeriodCounterSnapshot) LatestPeriodCountRate(period string) (int64, float64) {
+	return pcs.periodCounts[period].count, pcs.periodCounts[period].rate
+}
+
+// Periods return periods of snapshot
+func (pcs *PeriodCounterSnapshot) Periods() []string {
+	ps := make([]string, 0, len(pcs.periodCounts))
+	for p := range pcs.periodCounts {
+		ps = append(ps, p)
+	}
+	return ps
+}
+
+// Snapshot returns the snapshot.
+func (pcs *PeriodCounterSnapshot) Snapshot() PeriodCounter { return pcs }
+
 // NilPeriodCounter no-op PeriodCounter
 type NilPeriodCounter struct{}
 
@@ -97,8 +147,14 @@ func (NilPeriodCounter) LatestPeriodCountRate(string) (int64, float64) { return 
 // Periods is a no-op.
 func (NilPeriodCounter) Periods() []string { return []string{} }
 
-// SetProids is a no-op.
-func (NilPeriodCounter) SetProids(string, time.Duration) {}
+// SetPeriod is a no-op.
+func (NilPeriodCounter) SetPeriod(string, time.Duration) {}
+
+// SetPeriods is a no-op.
+func (NilPeriodCounter) SetPeriods(map[string]time.Duration) {}
+
+// Snapshot is a no-op.
+func (NilPeriodCounter) Snapshot() PeriodCounter { return NilPeriodCounter{} }
 
 // StandardPeriodCounter 默认 PeriodCounter 实现
 type StandardPeriodCounter struct {
@@ -139,6 +195,11 @@ func (pc *StandardPeriodCounter) LatestPeriodCountRate(period string) (int64, fl
 	pc.Lock()
 	defer pc.Unlock()
 
+	ts := time.Now().Unix()
+	return pc.getPeriodCountRate(period, ts)
+}
+
+func (pc *StandardPeriodCounter) getPeriodCountRate(period string, ts int64) (int64, float64) {
 	// period 不存在
 	du, ok := pc.periods[period]
 	if !ok {
@@ -146,7 +207,6 @@ func (pc *StandardPeriodCounter) LatestPeriodCountRate(period string) (int64, fl
 	}
 
 	// 判断当前时间戳是否满足入库条件
-	ts := time.Now().Unix()
 	nextTs := pc.nextTs[period]
 	if ts < nextTs {
 		return 0, 0.0
@@ -171,41 +231,75 @@ func (pc *StandardPeriodCounter) Periods() (periods []string) {
 	return
 }
 
-// SetProids set period
-func (pc *StandardPeriodCounter) SetProids(p string, du time.Duration) {
+// SetPeriod set period
+func (pc *StandardPeriodCounter) SetPeriod(p string, du time.Duration) {
 	pc.Lock()
 	defer pc.Unlock()
 
+	pc.setPeriod(p, du, time.Now().Unix())
+}
+
+// SetPeriods set periods
+func (pc *StandardPeriodCounter) SetPeriods(ps map[string]time.Duration) {
+	pc.Lock()
+	defer pc.Unlock()
+
+	ts := time.Now().Unix()
+	for p, du := range ps {
+		pc.setPeriod(p, du, ts)
+	}
+}
+
+// setPeriod set period, lock before called
+func (pc *StandardPeriodCounter) setPeriod(p string, du time.Duration, nts int64) {
 	if du == 0 {
 		delete(pc.periods, p)
 		delete(pc.nextTs, p)
-	} else {
-		// period是否已经存在
-		if _, ok := pc.periods[p]; ok {
-			return
-		}
-
-		pc.periods[p] = du
-		nts := time.Now().Unix()
-		mod := int64(60)
-		// 设置下次汇报的时间戳
-		// 如果是5分钟，15分钟，30分钟，60分钟，1天，设置为整点对齐
-		switch du {
-		case m5:
-			mod = 300
-		case m15:
-			mod = 15 * 60
-		case m30:
-			mod = 30 * 60
-		case m60:
-			fallthrough
-		case h1:
-			mod = 3600
-		case d1:
-			mod = 86400
-		default:
-		}
-		nts = nts - nts%mod + mod
-		pc.nextTs[p] = nts
+		return
 	}
+	// period是否已经存在
+	if _, ok := pc.periods[p]; ok {
+		return
+	}
+
+	pc.periods[p] = du
+	mod := int64(60)
+	// 设置下次汇报的时间戳
+	// 如果是5分钟，15分钟，30分钟，60分钟，1天，设置为整点对齐
+	switch du {
+	case m5:
+		mod = 300
+	case m15:
+		mod = 15 * 60
+	case m30:
+		mod = 30 * 60
+	case m60:
+		fallthrough
+	case h1:
+		mod = 3600
+	case d1:
+		mod = 86400
+	default:
+	}
+	nts = nts - nts%mod + mod
+	pc.nextTs[p] = nts
+}
+
+// Snapshot snapshot of StandardPeriodCounter
+func (pc *StandardPeriodCounter) Snapshot() PeriodCounter {
+	pc.Lock()
+	defer pc.Unlock()
+
+	pcs := &PeriodCounterSnapshot{
+		count:        pc.count,
+		periodCounts: make(map[string]countRate),
+	}
+
+	ts := time.Now().Unix()
+	for p := range pc.periods {
+		count, rate := pc.getPeriodCountRate(p, ts)
+		pcs.periodCounts[p] = countRate{count, rate}
+	}
+
+	return pcs
 }
