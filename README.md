@@ -48,6 +48,28 @@ t.Time(func() {})
 t.Update(47)
 ```
 
+PeriodCounter
+
+```go
+pc: = metrics.GetOrRegisterPeriodCounter("periodCounter", nil)
+pc.SetPeriod(metrics.M1)  // 1 minute
+pc.SetPeriod(metrics.M5)  // 5 minute
+pc.SetPeriod(metrics.M15) // 15 minute
+pc.SetPeriod(metrics.H1)  // 1 hour
+pc.SetPeriod(metrics.D1)  // 1 day
+
+pc.Inc(60)
+pc.Inc(100)
+
+delta, rate := pc.LatestPeriodCountRate(metrics.M1)
+delta, rate = pc.LatestPeriodCountRate(metrics.M5)
+delta, rate = pc.LatestPeriodCountRate(metrics.M15)
+delta, rate = pc.LatestPeriodCountRate(metrics.H1)
+....
+```
+This will report period count and rate
+
+
 Periodically log every metric in human-readable form to standard error:
 
 ```go
