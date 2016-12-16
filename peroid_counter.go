@@ -203,13 +203,13 @@ func (pc *StandardPeriodCounter) getPeriodCountRate(period string, ts int64) (in
 	// period 不存在
 	du, ok := pc.periods[period]
 	if !ok {
-		return 0, 0.0
+		return -1, -1.0
 	}
 
 	// 判断当前时间戳是否满足入库条件
 	nextTs := pc.nextTs[period]
 	if ts < nextTs {
-		return 0, 0.0
+		return -1, -1.0
 	}
 	pc.nextTs[period] = nextTs + int64(du/time.Second)
 	dcount := pc.count - pc.latestCounts[period]
