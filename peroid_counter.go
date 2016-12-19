@@ -3,6 +3,8 @@ package metrics
 import (
 	"sync"
 	"time"
+
+	"github.com/guotie/days"
 )
 
 // period counter是一个统计一段时间的总和和速率的计数器
@@ -236,7 +238,7 @@ func (pc *StandardPeriodCounter) SetPeriod(p string, du time.Duration) {
 	pc.Lock()
 	defer pc.Unlock()
 
-	pc.setPeriod(p, du, time.Now().Unix())
+	pc.setPeriod(p, du, time.Now())
 }
 
 // SetPeriods set periods
@@ -244,14 +246,14 @@ func (pc *StandardPeriodCounter) SetPeriods(ps map[string]time.Duration) {
 	pc.Lock()
 	defer pc.Unlock()
 
-	ts := time.Now().Unix()
+	ts := time.Now()
 	for p, du := range ps {
 		pc.setPeriod(p, du, ts)
 	}
 }
 
 // setPeriod set period, lock before called
-func (pc *StandardPeriodCounter) setPeriod(p string, du time.Duration, nts int64) {
+func (pc *StandardPeriodCounter) setPeriod(p string, du time.Duration, tm time.Time) {
 	if du == 0 {
 		delete(pc.periods, p)
 		delete(pc.nextTs, p)
@@ -262,6 +264,7 @@ func (pc *StandardPeriodCounter) setPeriod(p string, du time.Duration, nts int64
 		return
 	}
 
+	nts := tm.Unix()
 	pc.periods[p] = du
 	mod := int64(60)
 	// 设置下次汇报的时间戳
@@ -281,7 +284,12 @@ func (pc *StandardPeriodCounter) setPeriod(p string, du time.Duration, nts int64
 		mod = 86400
 	default:
 	}
-	nts = nts - nts%mod + mod
+	// 间隔时间为天时, 需修正时区
+	if du == d1 {
+		nts = days.Tomorrow(tm).Unix()
+	} else {
+		nts = nts - nts%mod + mod
+	}
 	pc.nextTs[p] = nts
 }
 
