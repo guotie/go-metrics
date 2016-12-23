@@ -6,10 +6,10 @@ import (
 	"time"
 )
 
-func TestPeriodCounter(t *testing.T) {
+func testPeriodCounter(t *testing.T) {
 	c := GetOrRegisterPeriodCounter("period_counter", nil)
-	c.SetProids(M1, m1)
-	c.SetProids(M5, m5)
+	c.SetPeriod(M1, m1)
+	c.SetPeriod(M5, m5)
 
 	c.Inc(10)
 	if c.Count() != 10 {
