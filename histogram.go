@@ -23,7 +23,7 @@ func GetOrRegisterHistogram(name string, r Registry, s Sample) Histogram {
 	if nil == r {
 		r = DefaultRegistry
 	}
-	return r.GetOrRegister(name, func() Histogram { return NewHistogram(s) }).(Histogram)
+	return r.GetOrRegister(name, func() Histogram { return NewHistogram(s) }, nil).(Histogram)
 }
 
 // NewHistogram constructs a new StandardHistogram from a Sample.

@@ -48,6 +48,9 @@ t.Time(func() {})
 t.Update(47)
 ```
 
+Add Meter Typs:
+增加类型：
+
 PeriodCounter
 
 ```go
@@ -69,6 +72,13 @@ delta, rate = pc.LatestPeriodCountRate(metrics.H1)
 ```
 This will report period count and rate
 
+GaugeMap
+
+这个是一种可以计算数值历史和数值之间关系的数据类型，数据关系的计算通过设置自定义函数来完成，
+非常灵活。
+
+```go
+```
 
 Periodically log every metric in human-readable form to standard error:
 
@@ -101,7 +111,7 @@ issues [#121](https://github.com/rcrowley/go-metrics/issues/121) and
 [#124](https://github.com/rcrowley/go-metrics/issues/124) for progress and details.
 
 ```go
-import "github.com/vrischmann/go-metrics-influxdb"
+import "github.com/guotie/go-metrics-influxdb"
 
 go influxdb.Influxdb(metrics.DefaultRegistry, 10e9, &influxdb.Config{
     Host:     "127.0.0.1:8086",

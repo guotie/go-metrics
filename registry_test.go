@@ -73,8 +73,8 @@ func TestRegistryGetOrRegister(t *testing.T) {
 	r := NewRegistry()
 
 	// First metric wins with GetOrRegister
-	_ = r.GetOrRegister("foo", NewCounter())
-	m := r.GetOrRegister("foo", NewGauge())
+	_ = r.GetOrRegister("foo", NewCounter(), nil)
+	m := r.GetOrRegister("foo", NewGauge(), nil)
 	if _, ok := m.(Counter); !ok {
 		t.Fatal(m)
 	}
@@ -98,8 +98,8 @@ func TestRegistryGetOrRegisterWithLazyInstantiation(t *testing.T) {
 	r := NewRegistry()
 
 	// First metric wins with GetOrRegister
-	_ = r.GetOrRegister("foo", NewCounter)
-	m := r.GetOrRegister("foo", NewGauge)
+	_ = r.GetOrRegister("foo", NewCounter, nil)
+	m := r.GetOrRegister("foo", NewGauge, nil)
 	if _, ok := m.(Counter); !ok {
 		t.Fatal(m)
 	}
@@ -123,7 +123,7 @@ func TestPrefixedChildRegistryGetOrRegister(t *testing.T) {
 	r := NewRegistry()
 	pr := NewPrefixedChildRegistry(r, "prefix.")
 
-	_ = pr.GetOrRegister("foo", NewCounter())
+	_ = pr.GetOrRegister("foo", NewCounter(), nil)
 
 	i := 0
 	r.Each(func(name string, m interface{}) {
@@ -140,7 +140,7 @@ func TestPrefixedChildRegistryGetOrRegister(t *testing.T) {
 func TestPrefixedRegistryGetOrRegister(t *testing.T) {
 	r := NewPrefixedRegistry("prefix.")
 
-	_ = r.GetOrRegister("foo", NewCounter())
+	_ = r.GetOrRegister("foo", NewCounter(), nil)
 
 	i := 0
 	r.Each(func(name string, m interface{}) {

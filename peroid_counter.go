@@ -13,30 +13,28 @@ import (
 // 注意: report 的间隔时间需要小于1分钟
 //
 const (
-	// M1 1 minute
-	M1 = "1m"
-	// M5 5 minute
-	M5 = "5m"
-	// M15 15 minute
-	M15 = "15m"
-	// M30 30 minute
-	M30 = "30m"
-	// M60 60 minute
-	M60 = "60m"
+	// MS1 1 minute
+	MS1 = "1m"
+	// MS5 5 minute
+	MS5 = "5m"
+	// MS15 15 minute
+	MS15 = "15m"
+	// MS30 30 minute
+	MS30 = "30m"
+
 	// H1 60 minute, 1 hour
-	H1 = "1h"
+	HS1 = "1h"
 	// D1 1 day
-	D1 = "1d"
+	DS1 = "1d"
 )
 
 var (
-	m1  = time.Minute
-	m5  = time.Minute * 5
-	m15 = time.Minute * 15
-	m30 = time.Minute * 30
-	m60 = time.Hour
-	h1  = time.Hour
-	d1  = time.Hour * 24
+	M1  = time.Minute
+	M5  = time.Minute * 5
+	M15 = time.Minute * 15
+	M30 = time.Minute * 30
+	H1  = time.Hour
+	D1  = time.Hour * 24
 )
 
 // PeriodCounter Period Counter
@@ -54,28 +52,36 @@ type PeriodCounter interface {
 
 // GetOrRegisterPeriodCounter returns an existing Counter or constructs and registers
 // a new StandardCounter.
-func GetOrRegisterPeriodCounter(name string, r Registry) PeriodCounter {
+// cb should be type of map[string]time.Duration
+func GetOrRegisterPeriodCounter(name string, r Registry, cb interface{}) PeriodCounter {
 	if nil == r {
 		r = DefaultRegistry
 	}
-	return r.GetOrRegister(name, NewPeriodCounter).(PeriodCounter)
+	return r.GetOrRegister(name, NewPeriodCounter, cb).(PeriodCounter)
 }
 
 // NewPeriodCounter constructs a new StandardPeriodCounter.
-func NewPeriodCounter() PeriodCounter {
+// cb should be type of map[string]time.Duration
+func NewPeriodCounter(cb interface{}) PeriodCounter {
 	if UseNilMetrics {
 		return NilPeriodCounter{}
 	}
-	return &StandardPeriodCounter{
+	pc := &StandardPeriodCounter{
 		periods:      make(map[string]time.Duration),
 		latestCounts: make(map[string]int64),
 		nextTs:       make(map[string]int64),
 	}
+	if cb != nil {
+		pc.SetPeriods(cb.(map[string]time.Duration))
+	}
+
+	return pc
 }
 
 // NewRegisteredPeriodCounter constructs and registers a new StandardPeriodCounter.
-func NewRegisteredPeriodCounter(name string, r Registry) PeriodCounter {
-	c := NewPeriodCounter()
+// cb is period
+func NewRegisteredPeriodCounter(name string, r Registry, cb interface{}) PeriodCounter {
+	c := NewPeriodCounter(cb)
 	if nil == r {
 		r = DefaultRegistry
 	}
@@ -270,22 +276,21 @@ func (pc *StandardPeriodCounter) setPeriod(p string, du time.Duration, tm time.T
 	// 设置下次汇报的时间戳
 	// 如果是5分钟，15分钟，30分钟，60分钟，1天，设置为整点对齐
 	switch du {
-	case m5:
+	case M5:
 		mod = 300
-	case m15:
+	case M15:
 		mod = 15 * 60
-	case m30:
+	case M30:
 		mod = 30 * 60
-	case m60:
-		fallthrough
-	case h1:
+
+	case H1:
 		mod = 3600
-	case d1:
+	case D1:
 		mod = 86400
 	default:
 	}
 	// 间隔时间为天时, 需修正时区
-	if du == d1 {
+	if du == D1 {
 		nts = days.Tomorrow(tm).Unix()
 	} else {
 		nts = nts - nts%mod + mod

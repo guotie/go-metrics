@@ -32,7 +32,7 @@ type Registry interface {
 	// Gets an existing metric or registers the given one.
 	// The interface can be the metric to register if not found in registry,
 	// or a function returning the metric for lazy instantiation.
-	GetOrRegister(string, interface{}) interface{}
+	GetOrRegister(string, interface{}, interface{}) interface{}
 
 	// Register the given metric under the given name.
 	Register(string, interface{}) error
@@ -77,14 +77,18 @@ func (r *StandardRegistry) Get(name string) interface{} {
 // alternative to calling Get and Register on failure.
 // The interface can be the metric to register if not found in registry,
 // or a function returning the metric for lazy instantiation.
-func (r *StandardRegistry) GetOrRegister(name string, i interface{}) interface{} {
+func (r *StandardRegistry) GetOrRegister(name string, i interface{}, cb interface{}) interface{} {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 	if metric, ok := r.metrics[name]; ok {
 		return metric
 	}
 	if v := reflect.ValueOf(i); v.Kind() == reflect.Func {
-		i = v.Call(nil)[0].Interface()
+		if reflect.TypeOf(i).NumIn() == 0 {
+			i = v.Call(nil)[0].Interface()
+		} else {
+			i = v.Call([]reflect.Value{reflect.ValueOf(cb)})[0].Interface()
+		}
 	}
 	r.register(name, i)
 	return i
@@ -130,7 +134,7 @@ func (r *StandardRegistry) register(name string, i interface{}) error {
 		return DuplicateMetric(name)
 	}
 	switch i.(type) {
-	case Counter, PeriodCounter, Gauge, GaugeFloat64, Healthcheck, Histogram, Meter, Timer:
+	case Counter, PeriodCounter, Gauge, GaugeFloat64, Healthcheck, Histogram, Meter, Timer, DataMap:
 		r.metrics[name] = i
 	}
 	return nil
@@ -200,9 +204,9 @@ func (r *PrefixedRegistry) Get(name string) interface{} {
 // Gets an existing metric or registers the given one.
 // The interface can be the metric to register if not found in registry,
 // or a function returning the metric for lazy instantiation.
-func (r *PrefixedRegistry) GetOrRegister(name string, metric interface{}) interface{} {
+func (r *PrefixedRegistry) GetOrRegister(name string, metric interface{}, cb interface{}) interface{} {
 	realName := r.prefix + name
-	return r.underlying.GetOrRegister(realName, metric)
+	return r.underlying.GetOrRegister(realName, metric, cb)
 }
 
 // Register the given metric under the given name. The name will be prefixed.
@@ -241,8 +245,8 @@ func Get(name string) interface{} {
 
 // Gets an existing metric or creates and registers a new one. Threadsafe
 // alternative to calling Get and Register on failure.
-func GetOrRegister(name string, i interface{}) interface{} {
-	return DefaultRegistry.GetOrRegister(name, i)
+func GetOrRegister(name string, i interface{}, cb interface{}) interface{} {
+	return DefaultRegistry.GetOrRegister(name, i, cb)
 }
 
 // Register the given metric under the given name.  Returns a DuplicateMetric
