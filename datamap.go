@@ -39,6 +39,7 @@ type DataMap interface {
 // DataMapOption
 // option of DataMap
 type DataMapOption struct {
+	Prefix         string
 	Interval       time.Duration
 	Periods        map[string]time.Duration
 	DependentFuncs map[string]interface{}
@@ -62,6 +63,9 @@ func GetOrRegisterDataMap(name string, r Registry, opt *DataMapOption) DataMap {
 	if nil == r {
 		r = DefaultRegistry
 	}
+	if opt.Prefix == "" {
+		opt.Prefix = name
+	}
 	return r.GetOrRegister(name, NewDataMap, opt).(DataMap)
 }
 
@@ -80,10 +84,16 @@ func NewDataMap(opt *DataMapOption) DataMap {
 		nextTs:         make(map[string]int64),
 	}
 
+	if opt == nil {
+		panic("NewDataMap: param opt should NOT be nil")
+	}
+
 	if opt.Interval != 0 {
 		// 设置 minInterval
 		gm.minInterval = opt.Interval
 	}
+
+	gm.prefix = opt.Prefix
 
 	gm.SetPeriods(opt.Periods)
 	for k, v := range opt.DependentFuncs {
@@ -126,6 +136,8 @@ type StandardDataMap struct {
 
 	minInterval    time.Duration // 最小间隔
 	latestSnapshot time.Time
+
+	prefix string // 加在产生的meter前作为前缀
 
 	values         map[string]interface{}            // 当前值
 	valuesHistory  map[string]map[string]interface{} // 历史值
@@ -189,7 +201,8 @@ func (g *StandardDataMap) Snapshot(r Registry) []interface{} {
 }
 
 // 生成响应的 meter
-func (g *StandardDataMap) generateMeter(key string, val interface{}, dependent bool, r Registry, typ reflect.Type) interface{} {
+func (g *StandardDataMap) generateMeter(key string, val interface{},
+	dependent bool, r Registry, typ reflect.Type) interface{} {
 	if dependent {
 		// 计算val的值
 		switch val.(type) {
@@ -217,17 +230,17 @@ func (g *StandardDataMap) generateMeter(key string, val interface{}, dependent b
 
 	switch typ {
 	case counterType:
-		c := GetOrRegisterCounter(key, r)
+		c := GetOrRegisterCounter(g.prefix+"-"+key, r)
 		c.Inc(val.(int64))
 		return c
 
 	case gaugeType:
-		m := GetOrRegisterGauge(key, r)
+		m := GetOrRegisterGauge(g.prefix+"-"+key, r)
 		m.Update(val.(int64))
 		return m
 
 	case gaugeFloat64Type:
-		m := GetOrRegisterGaugeFloat64(key, r)
+		m := GetOrRegisterGaugeFloat64(g.prefix+"-"+key, r)
 		m.Update(val.(float64))
 		return m
 
@@ -235,7 +248,7 @@ func (g *StandardDataMap) generateMeter(key string, val interface{}, dependent b
 		panic("Not support Histogram type")
 
 	case meterType:
-		m := GetOrRegisterMeter(key, r)
+		m := GetOrRegisterMeter(g.prefix+"-"+key, r)
 		m.Mark(val.(int64))
 		return m
 
