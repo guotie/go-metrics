@@ -86,10 +86,13 @@ func (r *StandardRegistry) GetOrRegister(name string, i interface{}, cb interfac
 	if v := reflect.ValueOf(i); v.Kind() == reflect.Func {
 		if reflect.TypeOf(i).NumIn() == 0 {
 			i = v.Call(nil)[0].Interface()
-		} else {
+		} else if reflect.TypeOf(i).NumIn() == 1 {
 			i = v.Call([]reflect.Value{reflect.ValueOf(cb)})[0].Interface()
+		} else if reflect.TypeOf(i).NumIn() == 2 {
+			i = v.Call([]reflect.Value{reflect.ValueOf(name), reflect.ValueOf(cb)})[0].Interface()
 		}
 	}
+
 	r.register(name, i)
 	return i
 }
@@ -134,7 +137,10 @@ func (r *StandardRegistry) register(name string, i interface{}) error {
 		return DuplicateMetric(name)
 	}
 	switch i.(type) {
-	case Counter, PeriodCounter, Gauge, GaugeFloat64, Healthcheck, Histogram, Meter, Timer, DataMap:
+	case Counter, PeriodCounter, Gauge, GaugeFloat64, Healthcheck, Histogram, Meter, Timer:
+		r.metrics[name] = i
+	case DataMap:
+		fmt.Printf("register datamap %s %v\n", name, i)
 		r.metrics[name] = i
 	}
 	return nil

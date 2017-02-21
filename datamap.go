@@ -36,7 +36,7 @@ type DataMap interface {
 	SetDependentFuncs(string, interface{}) // 因变量
 }
 
-// DataMapOption
+// DataMapOption datamap options
 // option of DataMap
 type DataMapOption struct {
 	Prefix         string
@@ -63,18 +63,16 @@ func GetOrRegisterDataMap(name string, r Registry, opt *DataMapOption) DataMap {
 	if nil == r {
 		r = DefaultRegistry
 	}
-	if opt.Prefix == "" {
-		opt.Prefix = name
-	}
+
 	return r.GetOrRegister(name, NewDataMap, opt).(DataMap)
 }
 
 // NewDataMap constructs a new StandardDataMap.
-func NewDataMap(opt *DataMapOption) DataMap {
-	fmt.Println("New DataMap")
+func NewDataMap(prefix string, opt *DataMapOption) DataMap {
 	gm := &StandardDataMap{
 		minInterval:    time.Second * 60,
 		latestSnapshot: time.Now(),
+		prefix:         prefix,
 		values:         make(map[string]interface{}),
 		valuesHistory:  make(map[string]map[string]interface{}),
 		dependentFuncs: make(map[string]interface{}),
@@ -92,8 +90,6 @@ func NewDataMap(opt *DataMapOption) DataMap {
 		// 设置 minInterval
 		gm.minInterval = opt.Interval
 	}
-
-	gm.prefix = opt.Prefix
 
 	gm.SetPeriods(opt.Periods)
 	for k, v := range opt.DependentFuncs {
@@ -115,7 +111,7 @@ func NewDataMap(opt *DataMapOption) DataMap {
 
 // NewRegisteredDataMap constructs and registers a new StandardDataMap.
 func NewRegisteredDataMap(name string, r Registry, opt *DataMapOption) DataMap {
-	c := NewDataMap(opt)
+	c := NewDataMap(name, opt)
 	if nil == r {
 		r = DefaultRegistry
 	}
@@ -148,6 +144,11 @@ type StandardDataMap struct {
 
 	periods map[string]time.Duration
 	nextTs  map[string]int64 // period下次入库的timestamp(second)
+}
+
+// Prefix prefix of datamap
+func (g *StandardDataMap) Prefix() string {
+	return g.prefix
 }
 
 // snapshotable return whether snapshot
