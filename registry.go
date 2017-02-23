@@ -137,7 +137,10 @@ func (r *StandardRegistry) register(name string, i interface{}) error {
 		return DuplicateMetric(name)
 	}
 	switch i.(type) {
-	case Counter, PeriodCounter, Gauge, GaugeFloat64, Healthcheck, Histogram, Meter, Timer, DataMap:
+	case Counter, PeriodCounter, Gauge, GaugeFloat64, Healthcheck, Histogram, Meter, Timer:
+		r.metrics[name] = i
+	case DataMap, CondInt, CondFloat:
+		//fmt.Printf("register meter type: %s %v\n", name, reflect.TypeOf(i))
 		r.metrics[name] = i
 	}
 	return nil

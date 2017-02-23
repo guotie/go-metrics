@@ -48,6 +48,7 @@ type PeriodCounter interface {
 	SetPeriod(string, time.Duration)
 	SetPeriods(map[string]time.Duration)
 	Snapshot() PeriodCounter
+	Writable() bool
 }
 
 // GetOrRegisterPeriodCounter returns an existing Counter or constructs and registers
@@ -63,13 +64,11 @@ func GetOrRegisterPeriodCounter(name string, r Registry, cb interface{}) PeriodC
 // NewPeriodCounter constructs a new StandardPeriodCounter.
 // cb should be type of map[string]time.Duration
 func NewPeriodCounter(cb interface{}) PeriodCounter {
-	if UseNilMetrics {
-		return NilPeriodCounter{}
-	}
 	pc := &StandardPeriodCounter{
 		periods:      make(map[string]time.Duration),
 		latestCounts: make(map[string]int64),
 		nextTs:       make(map[string]int64),
+		lastSnap:     time.Now(),
 	}
 	if cb != nil {
 		pc.SetPeriods(cb.(map[string]time.Duration))
@@ -98,6 +97,7 @@ type countRate struct {
 // PeriodCounterSnapshot is a read-only copy of another PeriodCounter.
 type PeriodCounterSnapshot struct {
 	count        int64
+	writable     bool // 是否可以入库
 	periodCounts map[string]countRate
 }
 
@@ -120,6 +120,9 @@ func (*PeriodCounterSnapshot) SetPeriods(map[string]time.Duration) {
 // Count return count
 func (pcs *PeriodCounterSnapshot) Count() int64 { return pcs.count }
 
+// Writable return should insert to db
+func (pcs *PeriodCounterSnapshot) Writable() bool { return pcs.writable }
+
 // LatestPeriodCountRate return period count and rate of the period
 func (pcs *PeriodCounterSnapshot) LatestPeriodCountRate(period string) (int64, float64) {
 	return pcs.periodCounts[period].count, pcs.periodCounts[period].rate
@@ -137,33 +140,6 @@ func (pcs *PeriodCounterSnapshot) Periods() []string {
 // Snapshot returns the snapshot.
 func (pcs *PeriodCounterSnapshot) Snapshot() PeriodCounter { return pcs }
 
-// NilPeriodCounter no-op PeriodCounter
-type NilPeriodCounter struct{}
-
-// Clear is a no-op.
-func (NilPeriodCounter) Clear() {}
-
-// Inc is a no-op.
-func (NilPeriodCounter) Inc(int64) {}
-
-// Count is a no-op.
-func (NilPeriodCounter) Count() int64 { return 0 }
-
-// LatestPeriodCountRate is a no-op.
-func (NilPeriodCounter) LatestPeriodCountRate(string) (int64, float64) { return 0, 0.0 }
-
-// Periods is a no-op.
-func (NilPeriodCounter) Periods() []string { return []string{} }
-
-// SetPeriod is a no-op.
-func (NilPeriodCounter) SetPeriod(string, time.Duration) {}
-
-// SetPeriods is a no-op.
-func (NilPeriodCounter) SetPeriods(map[string]time.Duration) {}
-
-// Snapshot is a no-op.
-func (NilPeriodCounter) Snapshot() PeriodCounter { return NilPeriodCounter{} }
-
 // StandardPeriodCounter 默认 PeriodCounter 实现
 type StandardPeriodCounter struct {
 	sync.RWMutex
@@ -171,6 +147,8 @@ type StandardPeriodCounter struct {
 	periods      map[string]time.Duration
 	latestCounts map[string]int64
 	nextTs       map[string]int64 // period下次入库的timestamp(second)
+	lastSnap     time.Time
+	minPeriod    time.Duration
 }
 
 // Clear clear count and latestCounts
@@ -244,6 +222,12 @@ func (pc *StandardPeriodCounter) SetPeriod(p string, du time.Duration) {
 	pc.Lock()
 	defer pc.Unlock()
 
+	if pc.minPeriod == 0 {
+		pc.minPeriod = du
+	} else if pc.minPeriod > du {
+		pc.minPeriod = du
+	}
+
 	pc.setPeriod(p, du, time.Now())
 }
 
@@ -298,17 +282,34 @@ func (pc *StandardPeriodCounter) setPeriod(p string, du time.Duration, tm time.T
 	pc.nextTs[p] = nts
 }
 
+// Writable return should insert to db
+func (pc *StandardPeriodCounter) Writable() bool {
+	now := time.Now()
+	return now.Sub(pc.lastSnap) >= pc.minPeriod
+}
+
 // Snapshot snapshot of StandardPeriodCounter
 func (pc *StandardPeriodCounter) Snapshot() PeriodCounter {
 	pc.Lock()
 	defer pc.Unlock()
+
+	now := time.Now()
+	ts := now.Unix()
+	if now.Sub(pc.lastSnap) < pc.minPeriod {
+		return &PeriodCounterSnapshot{
+			writable: false,
+			count:    0,
+		}
+	}
+
+	// 更新lastSnap
+	pc.lastSnap = now
 
 	pcs := &PeriodCounterSnapshot{
 		count:        pc.count,
 		periodCounts: make(map[string]countRate),
 	}
 
-	ts := time.Now().Unix()
 	for p := range pc.periods {
 		count, rate := pc.getPeriodCountRate(p, ts)
 		pcs.periodCounts[p] = countRate{count, rate}

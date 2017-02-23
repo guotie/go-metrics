@@ -31,30 +31,42 @@ type DataMap interface {
 	Keys() []string          // 自变量列表
 	DependentKeys() []string // 因变量列表
 
-	SetPeriods(map[string]time.Duration)   // 历史数据
-	SetKeyType(string, reflect.Type, bool) // 设置 key type
-	SetDependentFuncs(string, interface{}) // 因变量
+	SetPeriods(map[string]time.Duration)                              // 历史数据
+	SetKeyType(string, reflect.Type, bool)                            // 设置 key type, 自变量
+	SetDependentVar(string, interface{}, reflect.Type, time.Duration) // 因变量
 }
 
 // DataMapOption datamap options
 // option of DataMap
 type DataMapOption struct {
-	Prefix         string
-	Interval       time.Duration
-	Periods        map[string]time.Duration
-	DependentFuncs map[string]interface{}
-	KeyTypes       map[string]reflect.Type
-	DepenentTypes  map[string]reflect.Type
+	Prefix        string
+	Interval      time.Duration
+	Periods       map[string]time.Duration
+	KeyTypes      map[string]reflect.Type
+	KeyPeriod     time.Duration // 自变量入库间隔
+	DependentVars map[string]*DependentVar
+}
+
+// DependentVar depend var
+type DependentVar struct {
+	Name     string
+	Func     interface{} // 计算规则
+	Typ      reflect.Type
+	Period   time.Duration
+	lastSnap time.Time // 上次snapshot时间
 }
 
 // 各种meter type
 var (
 	counterType      = reflect.TypeOf(&StandardCounter{0})
-	gaugeType        = reflect.TypeOf(&StandardGauge{0})
+	gaugeType        = reflect.TypeOf(&StandardGauge{})
 	gaugeFloat64Type = reflect.TypeOf(&StandardGaugeFloat64{})
 	histogramType    = reflect.TypeOf(&StandardHistogram{})
 	meterType        = reflect.TypeOf(&StandardMeter{})
 	timerType        = reflect.TypeOf(&StandardTimer{})
+
+	condIntType   = reflect.TypeOf(&StandardCondInt{})
+	condFloatType = reflect.TypeOf(&StandardCondFloat{})
 )
 
 // GetOrRegisterDataMap returns an existing datamap or constructs and registers a
@@ -75,11 +87,12 @@ func NewDataMap(prefix string, opt *DataMapOption) DataMap {
 		prefix:         prefix,
 		values:         make(map[string]interface{}),
 		valuesHistory:  make(map[string]map[string]interface{}),
-		dependentFuncs: make(map[string]interface{}),
-		keyTypes:       make(map[string]reflect.Type),
-		dependentTypes: make(map[string]reflect.Type),
-		periods:        make(map[string]time.Duration),
-		nextTs:         make(map[string]int64),
+		//dependentFuncs: make(map[string]interface{}),
+		keyTypes: make(map[string]reflect.Type),
+		//dependentTypes: make(map[string]reflect.Type),
+		dependentVars: make(map[string]*DependentVar),
+		periods:       make(map[string]time.Duration),
+		nextTs:        make(map[string]int64),
 	}
 
 	if opt == nil {
@@ -91,20 +104,28 @@ func NewDataMap(prefix string, opt *DataMapOption) DataMap {
 		gm.minInterval = opt.Interval
 	}
 
-	gm.SetPeriods(opt.Periods)
-	for k, v := range opt.DependentFuncs {
-		gm.SetDependentFuncs(k, v)
+	if opt.KeyPeriod != 0 {
+		gm.keyPeriod = opt.KeyPeriod
+	} else {
+		gm.keyPeriod = opt.Interval
 	}
+
+	// 设置自变量下次记录的时间戳
+	gm.SetPeriods(opt.Periods)
 
 	// key types
 	for k, t := range opt.KeyTypes {
 		gm.SetKeyType(k, t, false)
 	}
+	// dependent key types
+	for k, v := range opt.DependentVars {
+		gm.SetDependentVar(k, v.Func, v.Typ, v.Period)
+	}
 
 	// dependent key types
-	for k, t := range opt.DepenentTypes {
-		gm.SetKeyType(k, t, true)
-	}
+	//for k, t := range opt.DepenentTypes {
+	//	gm.SetKeyType(k, t, true)
+	//}
 
 	return gm
 }
@@ -135,12 +156,15 @@ type StandardDataMap struct {
 
 	prefix string // 加在产生的meter前作为前缀
 
-	values         map[string]interface{}            // 当前值
-	valuesHistory  map[string]map[string]interface{} // 历史值
-	dependentFuncs map[string]interface{}            // 计算因变量的值
+	values        map[string]interface{}            // 当前值
+	valuesHistory map[string]map[string]interface{} // 历史值
+	//dependentFuncs map[string]interface{}
 
-	keyTypes       map[string]reflect.Type
-	dependentTypes map[string]reflect.Type
+	keyTypes  map[string]reflect.Type
+	keyPeriod time.Duration
+	//dependentTypes map[string]reflect.Type
+
+	dependentVars map[string]*DependentVar // 因变量
 
 	periods map[string]time.Duration
 	nextTs  map[string]int64 // period下次入库的timestamp(second)
@@ -175,25 +199,28 @@ func (g *StandardDataMap) Snapshot(r Registry) []interface{} {
 
 	//fmt.Printf("Snap shot data map keyTypes: %d dependentKeyTypes: %d ....\n",
 	//	len(g.keyTypes), len(g.dependentTypes))
-	meters := make([]interface{}, 0)
+	var meters []interface{}
 	for k, t := range g.keyTypes {
 		// 自变量
 		val, ok := g.values[k]
 		if !ok {
 			continue
 		}
-		//fmt.Printf("independent typ: %v\n", k)
-		meters = append(meters, g.generateMeter(k, val, false, r, t))
+
+		// keyType period is 1 分钟
+		meters = append(meters, g.generateMeter(k, val, false, r, t, g.keyPeriod))
 	}
 
-	for k, t := range g.dependentTypes {
-		// 因变量
-		val, ok := g.dependentFuncs[k]
-		if !ok {
-			continue
+	now := time.Now()
+
+	for k, t := range g.dependentVars {
+		if now.Sub(t.lastSnap) >= t.Period {
+			//fmt.Printf("%v: snapshot dependent meter %s, type: %v lastSnap: %v\n", now, k, t.Typ, t.lastSnap)
+			t.lastSnap = now
+			fn := t.Func
+			// 因变量
+			meters = append(meters, g.generateMeter(k, fn, true, r, t.Typ, t.Period))
 		}
-		//fmt.Printf("dependent typ: %v\n", k)
-		meters = append(meters, g.generateMeter(k, val, true, r, t))
 	}
 
 	// 更新历史数据
@@ -203,7 +230,7 @@ func (g *StandardDataMap) Snapshot(r Registry) []interface{} {
 
 // 生成响应的 meter
 func (g *StandardDataMap) generateMeter(key string, val interface{},
-	dependent bool, r Registry, typ reflect.Type) interface{} {
+	dependent bool, r Registry, typ reflect.Type, arg interface{}) interface{} {
 	if dependent {
 		// 计算val的值
 		switch val.(type) {
@@ -230,31 +257,26 @@ func (g *StandardDataMap) generateMeter(key string, val interface{},
 	}
 
 	switch typ {
-	case counterType:
-		c := GetOrRegisterCounter(g.prefix+"-"+key, r)
-		c.Inc(val.(int64))
-		return c
-
-	case gaugeType:
-		m := GetOrRegisterGauge(g.prefix+"-"+key, r)
+	case condIntType:
+		period, ok := arg.(time.Duration)
+		if !ok {
+			return nil
+		}
+		m := GetOrRegisterCondInt(g.prefix+"-"+key, r, period)
 		m.Update(val.(int64))
 		return m
 
-	case gaugeFloat64Type:
-		m := GetOrRegisterGaugeFloat64(g.prefix+"-"+key, r)
+	case condFloatType:
+		period, ok := arg.(time.Duration)
+		if !ok {
+			return nil
+		}
+		m := GetOrRegisterCondFloat(g.prefix+"-"+key, r, period)
 		m.Update(val.(float64))
 		return m
 
-	case histogramType:
-		panic("Not support Histogram type")
-
-	case meterType:
-		m := GetOrRegisterMeter(g.prefix+"-"+key, r)
-		m.Mark(val.(int64))
-		return m
-
-	case timerType:
-		panic("Not support timer meter type")
+	default:
+		fmt.Printf("invalid meter type: %s-%s %v\n", g.prefix, key, typ)
 	}
 
 	return nil
@@ -314,18 +336,18 @@ func (g *StandardDataMap) SetPeriods(p map[string]time.Duration) {
 }
 
 // setPeriod set period, lock before called
-func (pc *StandardDataMap) setPeriod(p string, du time.Duration, tm time.Time) {
+// 按照时间规则, 尽可能取整, 例如分钟从00秒开始, 5分钟从00分钟开始
+func (g *StandardDataMap) setPeriod(p string, du time.Duration, tm time.Time) {
 	if du == 0 {
 		panic("setPeriod: invalid duration: 0")
-		return
 	}
 	// period是否已经存在
-	if _, ok := pc.periods[p]; ok {
+	if _, ok := g.periods[p]; ok {
 		return
 	}
 
 	nts := tm.Unix()
-	pc.periods[p] = du
+	g.periods[p] = du
 	mod := int64(60)
 	// 设置下次汇报的时间戳
 	// 如果是5分钟，15分钟，30分钟，60分钟，1天，设置为整点对齐
@@ -354,7 +376,7 @@ func (pc *StandardDataMap) setPeriod(p string, du time.Duration, tm time.Time) {
 	} else {
 		nts = nts - nts%mod + mod
 	}
-	pc.nextTs[p] = nts
+	g.nextTs[p] = nts
 }
 
 // SetKeyType 设置 key type
@@ -369,7 +391,7 @@ func (g *StandardDataMap) SetKeyType(key string, ty reflect.Type, isDependent bo
 	} else {
 		// 自变量
 		// independent variables
-		g.dependentTypes[key] = ty
+		//g.dependentTypes[key] = ty
 	}
 }
 
@@ -444,36 +466,43 @@ func (g *StandardDataMap) DependentKeys() []string {
 	g.RLock()
 	defer g.RUnlock()
 
-	keys := make([]string, len(g.dependentFuncs))
+	keys := make([]string, len(g.dependentVars))
 	i := 0
-	for k := range g.dependentFuncs {
+	for k := range g.dependentVars {
 		keys[i] = k
 	}
 	return keys
 }
 
-// SetDependentFuncs set IntValueFunc
-func (g *StandardDataMap) SetDependentFuncs(key string, fn interface{}) {
+// SetDependentVar set IntValueFunc
+func (g *StandardDataMap) SetDependentVar(key string, fn interface{}, typ reflect.Type, period time.Duration) {
+	var dv DependentVar
+
 	g.Lock()
 	defer g.Unlock()
 
 	switch fn.(type) {
 	case IntValueFunc:
-		g.dependentFuncs[key] = fn
+		dv.Func = fn
 
 	case func(DataMap) int64:
-		g.dependentFuncs[key] = IntValueFunc(fn.(func(DataMap) int64))
+		dv.Func = IntValueFunc(fn.(func(DataMap) int64))
 
 	case FloatValueFunc:
-		g.dependentFuncs[key] = fn
+		dv.Func = fn
 
 	case func(DataMap) float64:
-		g.dependentFuncs[key] = FloatValueFunc(fn.(func(DataMap) float64))
+		dv.Func = FloatValueFunc(fn.(func(DataMap) float64))
 
 	default:
 		panic(fmt.Sprintf("invalid type of param fn, should be IntValueFunc or FloatValueFunc: %v",
 			reflect.TypeOf(fn)))
 	}
+	dv.Name = key
+	dv.Typ = typ
+	dv.Period = period
+	dv.lastSnap = time.Now()
+	g.dependentVars[key] = &dv
 
 	return
 }
