@@ -304,8 +304,8 @@ func (pc *StandardPeriodCounter) Snapshot() PeriodCounter {
 
 	// 更新lastSnap
 	pc.lastSnap = now
-
 	pcs := &PeriodCounterSnapshot{
+		writable:     true,
 		count:        pc.count,
 		periodCounts: make(map[string]countRate),
 	}
