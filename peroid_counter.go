@@ -295,7 +295,7 @@ func (pc *StandardPeriodCounter) Snapshot() PeriodCounter {
 
 	now := time.Now()
 	ts := now.Unix()
-	if now.Sub(pc.lastSnap) < pc.minPeriod {
+	if pc.Writable() == false {
 		return &PeriodCounterSnapshot{
 			writable: false,
 			count:    0,
