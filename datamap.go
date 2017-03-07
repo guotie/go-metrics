@@ -82,8 +82,8 @@ func GetOrRegisterDataMap(name string, r Registry, opt *DataMapOption) DataMap {
 // NewDataMap constructs a new StandardDataMap.
 func NewDataMap(prefix string, opt *DataMapOption) DataMap {
 	gm := &StandardDataMap{
-		minInterval:    time.Second * 60,
-		latestSnapshot: time.Now(),
+		minInterval:    60,
+		latestSnapshot: time.Now().Unix(),
 		prefix:         prefix,
 		values:         make(map[string]interface{}),
 		valuesHistory:  make(map[string]map[string]interface{}),
@@ -101,7 +101,7 @@ func NewDataMap(prefix string, opt *DataMapOption) DataMap {
 
 	if opt.Interval != 0 {
 		// 设置 minInterval
-		gm.minInterval = opt.Interval
+		gm.minInterval = int64(opt.Interval / time.Second)
 	}
 
 	if opt.KeyPeriod != 0 {
@@ -151,8 +151,8 @@ type IntValueFunc func(DataMap) int64
 type StandardDataMap struct {
 	sync.RWMutex
 
-	minInterval    time.Duration // 最小间隔
-	latestSnapshot time.Time
+	minInterval    int64 // 最小间隔
+	latestSnapshot int64
 
 	prefix string // 加在产生的meter前作为前缀
 
@@ -177,8 +177,8 @@ func (g *StandardDataMap) Prefix() string {
 
 // snapshotable return whether snapshot
 func (g *StandardDataMap) snapshotable() bool {
-	tm := time.Now()
-	if tm.Sub(g.latestSnapshot) > g.minInterval {
+	tm := time.Now().Unix()
+	if tm-g.latestSnapshot >= g.minInterval {
 		g.latestSnapshot = tm
 		return true
 	}

@@ -68,7 +68,7 @@ func NewPeriodCounter(cb interface{}) PeriodCounter {
 		periods:      make(map[string]time.Duration),
 		latestCounts: make(map[string]int64),
 		nextTs:       make(map[string]int64),
-		lastSnap:     time.Now(),
+		lastSnap:     time.Now().Unix(),
 	}
 	if cb != nil {
 		pc.SetPeriods(cb.(map[string]time.Duration))
@@ -147,8 +147,8 @@ type StandardPeriodCounter struct {
 	periods      map[string]time.Duration
 	latestCounts map[string]int64
 	nextTs       map[string]int64 // period下次入库的timestamp(second)
-	lastSnap     time.Time
-	minPeriod    time.Duration
+	lastSnap     int64
+	minPeriod    int64 // by second
 }
 
 // Clear clear count and latestCounts
@@ -222,12 +222,6 @@ func (pc *StandardPeriodCounter) SetPeriod(p string, du time.Duration) {
 	pc.Lock()
 	defer pc.Unlock()
 
-	if pc.minPeriod == 0 {
-		pc.minPeriod = du
-	} else if pc.minPeriod > du {
-		pc.minPeriod = du
-	}
-
 	pc.setPeriod(p, du, time.Now())
 }
 
@@ -252,6 +246,12 @@ func (pc *StandardPeriodCounter) setPeriod(p string, du time.Duration, tm time.T
 	// period是否已经存在
 	if _, ok := pc.periods[p]; ok {
 		return
+	}
+
+	if pc.minPeriod == 0 {
+		pc.minPeriod = int64(du / time.Second)
+	} else if pc.minPeriod > int64(du/time.Second) {
+		pc.minPeriod = int64(du / time.Second)
 	}
 
 	nts := tm.Unix()
@@ -284,8 +284,9 @@ func (pc *StandardPeriodCounter) setPeriod(p string, du time.Duration, tm time.T
 
 // Writable return should insert to db
 func (pc *StandardPeriodCounter) Writable() bool {
-	now := time.Now()
-	return now.Sub(pc.lastSnap) >= pc.minPeriod
+	ts := time.Now().Unix()
+
+	return ts-pc.lastSnap >= pc.minPeriod
 }
 
 // Snapshot snapshot of StandardPeriodCounter
@@ -293,8 +294,6 @@ func (pc *StandardPeriodCounter) Snapshot() PeriodCounter {
 	pc.Lock()
 	defer pc.Unlock()
 
-	now := time.Now()
-	ts := now.Unix()
 	if pc.Writable() == false {
 		return &PeriodCounterSnapshot{
 			writable: false,
@@ -302,8 +301,9 @@ func (pc *StandardPeriodCounter) Snapshot() PeriodCounter {
 		}
 	}
 
+	ts := time.Now().Unix()
 	// 更新lastSnap
-	pc.lastSnap = now
+	pc.lastSnap = ts
 	pcs := &PeriodCounterSnapshot{
 		writable:     true,
 		count:        pc.count,
